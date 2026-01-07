@@ -7,49 +7,53 @@ export async function createSajaFolder(sajaName: string) {
     const drive = getDriveClient();
 
     // Check if folder already exists
-    const response = await drive.files.list({
-        q: `name = '${sajaName}' and '${ROOT_FOLDER_ID}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
-        fields: 'files(id, name)',
-    });
+    const query = `name = '${sajaName}' and mimeType = 'application/vnd.google-apps.folder' and '${ROOT_FOLDER_ID}' in parents and trashed = false`;
+    const list = await drive.files.list({ q: query, fields: 'files(id, name)' });
 
-    if (response.data.files && response.data.files.length > 0) {
-        return response.data.files[0].id;
+    if (list.data.files && list.data.files.length > 0) {
+        return list.data.files[0].id;
     }
 
     // Create new folder
-    const fileMetadata = {
+    const folderMetadata = {
         name: sajaName,
         mimeType: 'application/vnd.google-apps.folder',
         parents: [ROOT_FOLDER_ID!],
     };
 
     const folder = await drive.files.create({
-        requestBody: fileMetadata,
+        requestBody: folderMetadata,
         fields: 'id',
     });
 
     return folder.data.id;
 }
 
-export async function uploadToDrive(fileName: string, mimeType: string, content: Buffer, sajaName: string) {
+export async function uploadToDrive(fileName: string, mimeType: string, buffer: Buffer, sajaName: string) {
     const drive = getDriveClient();
     const folderId = await createSajaFolder(sajaName);
 
-    const fileMetadata = {
-        name: fileName,
-        parents: [folderId!],
-    };
+    const stream = new Readable();
+    stream.push(buffer);
+    stream.push(null);
 
-    const media = {
-        mimeType: mimeType,
-        body: Readable.from(content),
-    };
-
-    const file = await drive.files.create({
-        requestBody: fileMetadata,
-        media: media,
-        fields: 'id, webViewLink',
+    const response = await drive.files.create({
+        requestBody: {
+            name: fileName,
+            parents: folderId ? [folderId] : undefined,
+        },
+        media: {
+            mimeType: mimeType,
+            body: stream,
+        },
+        fields: 'id, webViewLink, webContentLink',
     });
 
-    return file.data;
+    // Make it public or reader-accessible
+    await drive.permissions.create({
+        fileId: response.data.id!,
+        requestBody: { role: 'reader', type: 'anyone' },
+    });
+
+    return { id: response.data.id, link: response.data.webViewLink };
 }
